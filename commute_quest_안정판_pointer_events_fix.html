@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Commute Quest – 로또볼/경마 추첨 (클릭 고정·전환 안정판)</title>
+<style>
+  :root{ --bg:#0b0f1a; --panel:#0e1726; --panel-2:#0a1220; --line:#1d2a44; --text:#cfe1ff; --muted:#8ea5d3; }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Arial,Apple SD Gothic Neo,Noto Sans KR,"맑은 고딕",sans-serif}
+  header{display:flex;gap:12px;align-items:center;padding:10px 14px;background:var(--panel);border-bottom:1px solid var(--line)}
+  header .pill{padding:4px 10px;border-radius:999px;background:var(--panel-2);border:1px solid var(--line);font-size:12px;color:var(--muted)}
+  main{display:grid;grid-template-columns:320px 1fr;gap:12px;height:calc(100% - 52px);padding:12px;position:relative;z-index:0}
+  aside{display:flex;flex-direction:column;gap:10px;min-width:280px;position:relative;z-index:2}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px}
+  .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .roster{display:flex;flex-wrap:wrap;gap:8px;max-height:200px;overflow:auto;padding:6px;background:#0b1324;border:1px solid #2a3648;border-radius:10px}
+  .roster .tag{user-select:none;cursor:pointer;padding:8px 10px;border-radius:999px;border:1px solid #2a3b55;background:#0f1a2b;color:#cfe7ff}
+  .roster .tag.off{opacity:.45;filter:saturate(.6)}
+  button{cursor:pointer;background:#10203a;border:1px solid #2a3b55;color:#cfe7ff;border-radius:10px;padding:6px 10px;font-size:13px}
+  button.ghost{background:#0b1324}
+  button.primary{background:linear-gradient(#163a6d,#0f2d55)}
+  section.card{position:relative;z-index:1}
+  #stage{width:100%;height:100%;display:block;background:#091120;border:1px solid var(--line);border-radius:12px;position:relative;z-index:1;pointer-events:none}
+  .small{font-size:12px;color:var(--muted)}
+  #log{white-space:pre-line;font-family:ui-monospace,Menlo,Consolas,monospace;min-height:64px}
+</style>
+</head>
+<body>
+  <header>
+    <div class="pill">Commute Quest – 추첨 툴</div>
+    <div class="pill">정적 버튼·이벤트 위임</div>
+    <div class="pill">로또볼 · 운빨 경마</div>
+  </header>
+  <main>
+    <aside>
+      <div class="card">
+        <label>모드</label>
+        <div class="row">
+          <label><input type="radio" name="mode" value="lotto" checked/> 로또볼</label>
+          <label><input type="radio" name="mode" value="race"/> 경마</label>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>참가자 (클릭=포함/제외)</label>
+        <div id="roster" class="roster">
+          <button type="button" class="tag">김영경</button>
+          <button type="button" class="tag">김지은</button>
+          <button type="button" class="tag">김진아</button>
+          <button type="button" class="tag">남혜린</button>
+          <button type="button" class="tag">노세화</button>
+          <button type="button" class="tag">심은영</button>
+          <button type="button" class="tag">안영채</button>
+          <button type="button" class="tag">안지은</button>
+          <button type="button" class="tag">윤지민</button>
+          <button type="button" class="tag">이소민</button>
+          <button type="button" class="tag">장유정</button>
+          <button type="button" class="tag">전성욱</button>
+          <button type="button" class="tag">전혜정</button>
+        </div>
+        <div class="row small" style="margin-top:8px">
+          <button type="button" class="ghost" id="btnAllOn">전체 선택</button>
+          <button type="button" class="ghost" id="btnAllOff">전체 해제</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <label>추첨 설정</label>
+        <div class="row"><span class="small">선발 인원</span><input id="pickK" type="number" value="1" min="1" style="width:80px"/></div>
+        <div class="row" style="margin-top:6px"><button type="button" id="btnStart" class="primary">추첨 시작</button><button type="button" id="btnStop" class="ghost">정지</button></div>
+        <div class="row small" style="margin-top:6px"><button type="button" id="btnCopy" class="ghost">결과 복사</button><span>시드</span><input id="seed" type="text" style="width:110px"/></div>
+      </div>
+
+      <div class="card">
+        <label>로그 / 결과</label>
+        <div id="log" class="small"></div>
+      </div>
+    </aside>
+    <section class="card" style="display:grid;grid-template-rows:1fr auto;gap:8px">
+      <canvas id="stage"></canvas>
+      <div class="row small">
+        <span>FPS: <span id="fps">0</span></span>
+      </div>
+    </section>
+  </main>
+
+<script>
+'use strict';
+(function(){
+  const $=id=>document.getElementById(id);
+  // ===== 유틸 =====
+  function clamp(n,a,b){return Math.max(a,Math.min(b,n));}
+  function RNG(seed){let s=0;if(seed){for(let i=0;i<seed.length;i++)s=(s*31+seed.charCodeAt(i))>>>0;}else{s=(Math.random()*0xffffffff)>>>0;}return function(){s^=s<<13;s^=s>>>17;s^=s<<5;return((s>>>0)/4294967296);}}
+
+  // ===== 정적 참가자 버튼: 이벤트 위임 =====
+  const rosterBox=$('roster');
+  rosterBox.addEventListener('click',(e)=>{
+    const btn=e.target.closest('.tag');
+    if(!btn||!rosterBox.contains(btn)) return;
+    btn.classList.toggle('off');
+  });
+  $('btnAllOn').onclick=()=>rosterBox.querySelectorAll('.tag').forEach(b=>b.classList.remove('off'));
+  $('btnAllOff').onclick=()=>rosterBox.querySelectorAll('.tag').forEach(b=>b.classList.add('off'));
+  function currentNames(){
+    const all=[...rosterBox.querySelectorAll('.tag')].map(b=>b.textContent.trim());
+    const ons=[...rosterBox.querySelectorAll('.tag:not(.off)')].map(b=>b.textContent.trim());
+    return ons.length?ons:all;
+  }
+
+  // ===== 입력(스크롤 방지) =====
+  window.addEventListener('keydown',e=>{ const keys=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' ']; if(keys.includes(e.key)) e.preventDefault(); },{passive:false});
+
+  // ===== 캔버스/FPS =====
+  const cvs=$('stage'); const ctx=cvs.getContext('2d'); let W=0,H=0; resize(); window.addEventListener('resize',resize);
+  function resize(){ W=cvs.width=Math.min(1280, window.innerWidth-360); H=cvs.height=Math.min(800, window.innerHeight-120); }
+  let last=performance.now(), acc=0, frames=0; function tickFPS(dt){ acc+=dt; frames++; if(acc>1000){ $('fps').textContent=frames; acc=0; frames=0; } }
+
+  // ===== 상태 =====
+  let mode='lotto', running=false; let stopHandle=null, raceCheckHandle=null; let rng=Math.random; let balls=[], horses=[], finished=[]; let overlay=null, confetti=[]; let audioCtx=null;
+  function resetAndClear(){ running=false; if(stopHandle){clearTimeout(stopHandle);stopHandle=null;} if(raceCheckHandle){clearInterval(raceCheckHandle);raceCheckHandle=null;} balls=[]; horses=[]; finished=[]; overlay=null; confetti.length=0; ctx.clearRect(0,0,W,H); }
+
+  // ===== 오버레이/팡파르 =====
+  function playFanfare(){ try{ audioCtx=audioCtx||new (window.AudioContext||window.webkitAudioContext)(); const notes=[523.25,659.25,783.99]; notes.forEach((f,i)=>{ const o=audioCtx.createOscillator(); const g=audioCtx.createGain(); o.frequency.value=f; o.type='triangle'; o.connect(g); g.connect(audioCtx.destination); const t=audioCtx.currentTime+i*0.08; o.start(t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.3,t+0.02); g.gain.exponentialRampToValueAtTime(0.0001,t+0.32); o.stop(t+0.35); }); }catch(e){} }
+  function launchConfetti(count=180){ confetti.length=0; for(let i=0;i<count;i++){ confetti.push({ x:Math.random()*W, y:-20-Math.random()*H*0.3, vx:(Math.random()*2-1)*80, vy:120+Math.random()*160, r:2+Math.random()*3, a:Math.random()*Math.PI*2, spin:(Math.random()*2-1)*4, hue:(Math.random()*360)|0 }); } }
+  function showWinnersOverlay(title,names){ overlay={title,names}; launchConfetti(); playFanfare(); }
+  function stepOverlay(dt){ if(!overlay) return; ctx.save(); ctx.fillStyle='rgba(0,0,0,0.45)'; ctx.fillRect(0,0,W,H); ctx.fillStyle='#fff'; const titleSize=Math.min(64,W*0.06); ctx.font=`900 ${titleSize}px ui-sans-serif`; ctx.textAlign='center'; ctx.textBaseline='top'; ctx.fillText(overlay.title,W/2,H*0.18); const nameStr=overlay.names.join(', '); const nameSize=Math.min(72,Math.max(28,W/Math.max(8,nameStr.length)*1.9)); ctx.font=`800 ${nameSize}px ui-sans-serif`; ctx.textBaseline='middle'; ctx.fillText(nameStr,W/2,H*0.5); ctx.font='14px ui-sans-serif'; ctx.fillStyle='#cfe1ff'; ctx.fillText('클릭/키 입력 시 닫힘',W/2,H*0.78); ctx.restore(); confetti.forEach(p=>{ p.x+=p.vx*dt; p.y+=p.vy*dt; p.a+=p.spin*dt; if(p.y>H+10){ p.y=-10; p.x=Math.random()*W; } ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.a); ctx.fillStyle=`hsl(${p.hue} 90% 65%)`; ctx.fillRect(-p.r,-p.r,p.r*2,p.r*2); ctx.restore(); }); }
+  window.addEventListener('keydown',()=>{ if(overlay) overlay=null; }); window.addEventListener('mousedown',()=>{ if(overlay) overlay=null; });
+
+  // ===== 로또 =====
+  function setupLotto(){ const names=currentNames(); rng=RNG($('seed').value||''); const baseR=22; balls=names.map(n=>({ n, x:rng()*W, y:rng()*H, vx:(rng()*2-1)*160, vy:(rng()*2-1)*160, r:baseR })); }
+  function stepLotto(dt){ ctx.clearRect(0,0,W,H); balls.forEach(b=>{ b.x+=b.vx*dt; b.y+=b.vy*dt; if(b.x<b.r){b.x=b.r;b.vx*=-1;} if(b.x>W-b.r){b.x=W-b.r;b.vx*=-1;} if(b.y<b.r){b.y=b.r;b.vy*=-1;} if(b.y>H-b.r){b.y=H-b.r;b.vy*=-1;} ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,Math.PI*2); const grad=ctx.createRadialGradient(b.x-b.r*0.3,b.y-b.r*0.3,b.r*0.2,b.x,b.y,b.r); grad.addColorStop(0,'#fef08a'); grad.addColorStop(1,'#f59e0b'); ctx.fillStyle=grad; ctx.fill(); ctx.fillStyle='#000'; ctx.font=`bold ${b.r}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText(b.n,b.x,b.y); }); }
+  function finishLotto(k){ running=false; const rngL=RNG($('seed').value||''); const pool=currentNames().slice(); for(let i=pool.length-1;i>0;i--){ const j=(rngL()*(i+1))|0; [pool[i],pool[j]]=[pool[j],pool[i]]; } const winners=pool.slice(0,k); $('log').textContent=`🎯 당첨 (${k}명)\n- `+winners.join('\n- '); showWinnersOverlay('🎉 당첨!',winners); }
+
+  // ===== 경마 (전원 표시 + 운빨 강화) =====
+  function setupRace(){ const names=currentNames(); rng=RNG($('seed').value||''); const L=names.length; const laneH=Math.max(22, H/Math.max(L,3)); horses=[]; finished=[]; for(let i=0;i<L;i++){ horses.push({ n:names[i], x:40, y: laneH*(i+0.5), v:100+rng()*200, target:200, accel:420, _timer:0 }); } }
+  function randomTargetSpeed(){ let s=50+rng()*310; if(rng()<0.08) s=480+rng()*120; if(rng()<0.06) s=40+rng()*30; return s; }
+  function stepRace(dt){ const L=horses.length; const laneH=Math.max(22, H/Math.max(L,3)); const finishX=W-40; ctx.fillStyle='#0d1a2f'; ctx.fillRect(0,0,W,H); for(let i=0;i<=L;i++){ ctx.fillStyle='#14213b'; ctx.fillRect(0,i*laneH,W,2); } ctx.fillStyle='#ef4444'; ctx.fillRect(finishX,0,3,H); horses.forEach(h=>{ if(finished.find(f=>f.n===h.n)) return; h._timer-=dt; if(h._timer<=0){ h.target=randomTargetSpeed(); h._timer=0.5; } const diff=h.target-h.v; const maxDelta=h.accel*dt; const delta=clamp(diff,-maxDelta,maxDelta); h.v+=delta; h.x+=h.v*dt; if(h.x>=finishX){ h.x=finishX; finished.push({n:h.n,time:performance.now()}); } }); ctx.font='20px "Apple Color Emoji",Segoe UI Emoji'; horses.forEach(h=>{ ctx.fillText('🐎',h.x,h.y); ctx.font='12px sans-serif'; ctx.fillText(h.n,h.x+22,h.y); }); }
+  function finishRace(k){ running=false; const order=finished.map(f=>f.n); if(order.length<k){ const remain=horses.filter(h=>!order.includes(h.n)).sort((a,b)=>b.x-a.x).map(h=>h.n); order.push(...remain);} const winners=order.slice(0,k); $('log').textContent=`🏆 결과 (${k}명)\n- `+winners.join('\n- '); showWinnersOverlay('🏆 우승!',winners); }
+
+  // ===== 루프 =====
+  function loop(){ const now=performance.now(); const dt=Math.min(1/30,(now-last)/1000); last=now; tickFPS(dt*1000); if(running){ if(mode==='lotto') stepLotto(dt); else stepRace(dt); } if(overlay) stepOverlay(dt); requestAnimationFrame(loop); }
+  requestAnimationFrame(loop);
+
+  // ===== UI (전환 고정) =====
+  Array.from(document.querySelectorAll('input[name="mode"]')).forEach(r=>{
+    r.addEventListener('change',()=>{
+      const sel=document.querySelector('input[name="mode"]:checked');
+      mode= sel ? sel.value : 'lotto';
+      resetAndClear();
+      if(mode==='lotto') setupLotto(); else setupRace();
+    });
+  });
+  $('btnStart').onclick=()=>{ const k=clamp(+$('pickK').value||1,1,99); $('log').textContent=''; resetAndClear(); if(mode==='lotto'){ setupLotto(); running=true; stopHandle=setTimeout(()=>finishLotto(k),3200); } else { setupRace(); running=true; const T0=performance.now(); raceCheckHandle=setInterval(()=>{ if(finished.length>=k || performance.now()-T0>9000){ clearInterval(raceCheckHandle); raceCheckHandle=null; finishRace(k); } },100); } };
+  $('btnStop').onclick=()=>{ resetAndClear(); $('log').textContent+='\n(정지됨)'; };
+  $('btnCopy').onclick=()=>{ const txt=$('log').textContent.trim(); if(!txt) return; navigator.clipboard.writeText(txt).then(()=>{ $('log').textContent+="\n(복사됨)"; }); };
+})();
+</script>
+</body>
+</html>
